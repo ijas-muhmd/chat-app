@@ -2,11 +2,19 @@ import json
 from typing import Dict
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from bson import ObjectId
+from profanity_check import predict
 
 from config.database import db
 from models.models import User, Message
 
 router = APIRouter()
+
+
+def censor_message(message: str) -> str:
+    if predict([message])[0] == 1:
+        return "****"
+    else:
+        return message
 
 
 class ConnectionManager:
@@ -29,9 +37,10 @@ class ConnectionManager:
         del self.active_connections[username]
 
     async def send_message(self, message: str, sender: str, recipient: str):
+        censored_message = censor_message(message)
         websocket = self.active_connections.get(recipient)
         if websocket:
-            await websocket.send_text(json.dumps({'sender': sender, 'message': message}))
+            await websocket.send_text(json.dumps({'sender': sender, 'message': censored_message}))
             return True
         else:
             return False
@@ -106,9 +115,9 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
             message_data = json.loads(data)
             recipient = message_data["recipient"]
             message_text = message_data["message"]
-
             delivered = await manager.send_message(message_text, username, recipient)
-            db_message = {'sender': username, 'recipient': recipient, 'message': message_text, 'delivered': delivered}
+            censored_message_text = censor_message(message_text)
+            db_message = {'sender': username, 'recipient': recipient, 'message': censored_message_text, 'delivered': delivered}
             await db['messages'].insert_one(db_message)
 
     except WebSocketDisconnect:
